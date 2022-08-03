@@ -1,11 +1,10 @@
-from concurrent.futures import thread
-from distutils.log import debug
-import string
 from urllib import request
 from flask import Flask, url_for, request
 
 #Helper Imports
 from keras.models import Sequential
+import plotly.express as px
+
 from keras.layers import LSTM
 from keras.layers import Dropout
 from keras.layers import Dense 
@@ -83,6 +82,7 @@ def getVariables():
 def getFreq():
     tmp_stocks=[]
     tmp_frequency=[]
+    plot_json_freq={}
     for stock in redditVariables.tickers:
         tmp_stocks.append(stock)
         tmp_frequency.append(redditVariables.tickers[stock])
@@ -91,11 +91,21 @@ def getFreq():
     plt.xticks( rotation='vertical')    
     plt.bar(tmp_stocks,tmp_frequency)
     plt.savefig("./static/freq.png")
+    fig = go.Figure([go.Bar(x=tmp_stocks, y= tmp_frequency, text=tmp_frequency,    marker_color='lightsalmon')])
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
+
+    plot_json_freq=json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+
+
+    return plot_json_freq
 
 
 def getDataframe():
     symbols = dict(sorted(redditVariables.tickers.items(), key=lambda item: item[1], reverse = True))
     top_picks = list(symbols.keys())[0: redditVariables.picks]
+    plot_json_sent={}
+    plot_json_picks={}
 
     times = []
     top = []
@@ -131,22 +141,73 @@ def getDataframe():
     df.index = ['Bearish', 'Neutral', 'Bullish', 'Total_Compound']
     df = df.T
     
-    squarify.plot(sizes=times, label=top, alpha=0.7)
-    plt.axis('off')
-    plt.title(f"{redditVariables.picks} most mentioned picks")
-    plt.savefig("./static/picks.png")
+    data = {'labels': top,
+        'values': times}
+
+    data=pd.DataFrame(data)
+
+    fig = px.treemap(data, path=['labels'],values='values')
+    colors=['#fae588','#f79d65','#f9dc5c','#e8ac65','#e76f51','#ef233c','#b7094c'] 
+
+    fig.update_layout(
+    paper_bgcolor='rgba(0,0,0,0)',
+    treemapcolorway = colors,
+    margin = dict(t=50, l=25, r=25, b=25))
+    plot_json_picks=json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+    
     df = df.astype(float)
-    colors = ['red', 'springgreen', 'forestgreen', 'coral']
-    df.plot(kind='bar', color=colors, title=f"Sentiment analysis of top {redditVariables.picks_ayz} picks:")
-    plt.savefig("./static/sentiment.png")
+
+
+
+
+
+
 
     df['date'] = [date.today() for x in range(df.shape[0])]
     df.reset_index(inplace=True)
     df.rename(columns={'index': 'stock'}, inplace=True)
+    
+    stoc=np.array(df["stock"])
+    bearish=np.array(df["Bearish"])
+    bullish=np.array(df["Bullish"])
+    neutral=np.array(df["Neutral"])
+    total=np.array(df["Total_Compound"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+    x=stoc,
+    y=bearish,
+    name='Bearish',
+    marker_color='red'
+    ))
+    fig.add_trace(go.Bar(
+    x=stoc,
+    y=neutral,
+    name='Neutral',
+    marker_color='darkcyan'
+    ))
+    fig.add_trace(go.Bar(
+    x=stoc,
+    y=bullish,
+    name='Bullish',
+    marker_color='lightgreen'
+    ))
+    fig.add_trace(go.Bar(
+    x=stoc,
+    y=total,
+    name='Total Compound',
+    marker_color='orange'
+    ))
+
+
+    fig.update_layout(barmode='group', xaxis_tickangle=-45)
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)')
+    plot_json_sent=json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     df.to_csv('./static/df.csv')
 
-    return symbols,top_picks
+    return symbols,top_picks,plot_json_sent,plot_json_picks
 
 def getCurrent():
     df = pd.read_csv('./static/df.csv', index_col=0)
@@ -299,7 +360,8 @@ def getHistory():
                 high = hist_analytics[item]['High'],
                 low = hist_analytics[item]['Low'],
                 close = hist_analytics[item]['Close'])])
-        fig.update_layout(xaxis_rangeslider_visible=False)
+        fig.update_layout(xaxis_rangeslider_visible=False )
+        
         plot_json[item]=json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     return plot_json,personal_list
@@ -450,10 +512,10 @@ def members():
     getVariables()
    
 
-    getFreq()
+    freq=getFreq()
     
 
-    symbols,top_picks=getDataframe()
+    symbols,top_picks, sentiment,picks=getDataframe()
 
     df=getCurrent()
     plot_json=getHistoricData(df)
@@ -461,6 +523,9 @@ def members():
 
     return { 
         "plot_json":plot_json,
+        "freq": freq,
+        "sentiment": sentiment,
+        "picks":picks,
         "statistics":{
         "symbols": symbols,
         "top_picks": top_picks,
