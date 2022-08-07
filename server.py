@@ -1,5 +1,7 @@
+from time import sleep, time
 from urllib import request
 from flask import Flask, url_for, request
+
 
 #Helper Imports
 from keras.models import Sequential
@@ -22,14 +24,28 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_datareader as pdr
 import numpy as np
+from flask_cors import CORS, cross_origin
 
+import threading
 
 stock_prediction={}
 
 
 app=Flask(__name__)
+app.config.update(
+    CELERY_BROKER_URL='redis://localhost:6379',
+    CELERY_RESULT_BACKEND='redis://localhost:6379'
+)
+CORS(app)
+
+
+
+
+
 
 local_history=[]
+
+
 def getVariables():
     for sub in redditVariables.subs:
         print(sub)
@@ -37,46 +53,54 @@ def getVariables():
         hot_python = subreddit.hot() 
         for submission in hot_python:
             flair = submission.link_flair_text
-            author = submission.author.name
+            try:
+                author = submission.author.name
+            except:
+                pass
+              
+           
             if submission.upvote_ratio >= redditVariables.upvoteRatio and submission.ups > redditVariables.ups and (flair in redditVariables.post_flairs or flair is None) and author not in redditVariables.ignoreAuthP:
                 submission.comment_sort = 'new'
                 comments = submission.comments
             
                 redditVariables.titles.append(submission.title)
                 redditVariables.posts += 1
-                submission.comments.replace_more(limit = redditVariables.limit)
-                for comment in comments:
-                    try:
-                        auth = comment.author.name
-                    except:
-                        pass
-                    redditVariables.c_analyzed += 1
-                
-                    if comment.score > redditVariables.upvotes and auth not in redditVariables.ignoreAuthC:
-                        split = comment.body.split(' ')
-                        for word in split:
-                            word = word.replace("$", "")
-                        
-                       
-                            if word.isupper() and len(word) <= 5 and word not in stockVariables.blacklist and word in stockVariables.stocks:
-                                  
-                                if redditVariables.uniqueCmt and auth not in redditVariables.goodAuth:
-                                    try:
-                                        if auth in redditVariables.cmt_auth[word]:
-                                            break
-                                    except:
-                                        pass
-                                
-                                if word in redditVariables.tickers:
-                                    redditVariables.tickers[word] += 1
-                                    redditVariables.a_comments[word].append(comment.body)
-                                    redditVariables.cmt_auth[word].append(auth)
-                                    redditVariables.count += 1
-                                else:
-                                    redditVariables.tickers[word] = 1
-                                    redditVariables.cmt_auth[word] = [auth]
-                                    redditVariables.a_comments[word] = [comment.body]
-                                    redditVariables.count += 1
+                if redditVariables.posts <=2:
+                    print(redditVariables.posts)
+
+                    submission.comments.replace_more(limit = redditVariables.limit)
+                    for comment in comments:
+                        try:
+                            auth = comment.author.name
+                        except:
+                            pass
+                        redditVariables.c_analyzed += 1
+
+                        if comment.score > redditVariables.upvotes and auth not in redditVariables.ignoreAuthC:
+                            split = comment.body.split(' ')
+                            for word in split:
+                                word = word.replace("$", "")
+
+
+                                if word.isupper() and len(word) <= 5 and word not in stockVariables.blacklist and word in stockVariables.stocks:
+
+                                    if redditVariables.uniqueCmt and auth not in redditVariables.goodAuth:
+                                        try:
+                                            if auth in redditVariables.cmt_auth[word]:
+                                                break
+                                        except:
+                                            pass
+                                        
+                                    if word in redditVariables.tickers:
+                                        redditVariables.tickers[word] += 1
+                                        redditVariables.a_comments[word].append(comment.body)
+                                        redditVariables.cmt_auth[word].append(auth)
+                                        redditVariables.count += 1
+                                    else:
+                                        redditVariables.tickers[word] = 1
+                                        redditVariables.cmt_auth[word] = [auth]
+                                        redditVariables.a_comments[word] = [comment.body]
+                                        redditVariables.count += 1
 
     
 def getFreq():
@@ -372,8 +396,9 @@ def getHistory():
 def getPrediction():
     
     personal_list=[]
+    current=pd.read_csv("./static/df.csv")
 
-    for item in stock_prediction:
+    for item in np.array(current["stock"]):
         personal_list.append(item)
 
     return personal_list
@@ -505,10 +530,15 @@ def histanal():
 
 
 
-@app.route("/members")
-def members():
-  
 
+
+
+
+
+
+@app.route("/members")
+@cross_origin()
+def members():
     getVariables()
    
 
@@ -520,7 +550,6 @@ def members():
     df=getCurrent()
     plot_json=getHistoricData(df)
     tables=[df.to_html(classes='data', header="true")]
-
     return { 
         "plot_json":plot_json,
         "freq": freq,
@@ -534,6 +563,13 @@ def members():
         "tickers": redditVariables.tickers,
         "all_comments": redditVariables.a_comments
     }, "table": tables  }
+    
+  
+@app.route("/cel")
+def cel():
+    return {}
+
+  
 
 if __name__ == "__main__":
-    app.run(threaded=True, port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
